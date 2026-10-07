@@ -1,0 +1,44 @@
+[Unit]
+Description=Cashflow forecaster
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cashflow
+Group=cashflow
+WorkingDirectory=/opt/cashflow
+Environment=NODE_ENV=production
+# Loopback only. Tailscale Serve is the only way in (see docs/DEPLOY.md).
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+Environment=DB_PATH=/var/lib/cashflow/cashflow.db
+Environment=TZ_HOUSEHOLD=America/New_York
+# Passkeys are bound to this exact hostname. Set both to your Tailscale Serve name.
+Environment=RP_ID=cashflow.YOUR-TAILNET.ts.net
+Environment=ORIGINS=https://cashflow.YOUR-TAILNET.ts.net
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning src/server/main.ts
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cashflow
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Update cashflow from GitHub (requested from the app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root, because it swaps /opt/cashflow and restarts the app. Fetching and building
+# drop to the cashflow-deploy user inside the script.
+ExecStart=/bin/bash /opt/cashflow/deploy/self-update.sh
+TimeoutStartSec=20min
+UMask=0022
+PrivateTmp=true
+ProtectHome=true

@@ -1,0 +1,22 @@
+[Unit]
+Description=Copy cashflow backups off-site (encrypted)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=cashflow
+Group=cashflow
+WorkingDirectory=/opt/cashflow
+Environment=RCLONE_CONFIG=/var/lib/cashflow/rclone.conf
+Environment=BACKUP_DIR=/var/lib/cashflow/backups
+Environment=OFFSITE_KEEP_DAYS=90
+ExecStart=/bin/sh deploy/offsite.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# rclone refreshes its Google token in the config file.
+ReadWritePaths=/var/lib/cashflow
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX

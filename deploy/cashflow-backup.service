@@ -1,0 +1,19 @@
+[Unit]
+Description=Cashflow database backup
+# Then copy it off-site (a no-op until off-site storage is configured).
+OnSuccess=cashflow-offsite.service
+
+[Service]
+Type=oneshot
+User=cashflow
+Group=cashflow
+WorkingDirectory=/opt/cashflow
+Environment=DB_PATH=/var/lib/cashflow/cashflow.db
+Environment=BACKUP_DIR=/var/lib/cashflow/backups
+Environment=BACKUP_KEEP=30
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning scripts/backup.ts
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cashflow

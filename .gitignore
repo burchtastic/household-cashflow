@@ -1,0 +1,13 @@
+# Financial data — never commit
+*.xlsx
+*.csv
+claude_share/
+private/
+.env
+.env.*
+data/
+node_modules/
+dist/
+
+# The import template has no financial data.
+!src/web/public/cashflow-import-template.xlsx

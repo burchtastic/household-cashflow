@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for update requests from the cashflow app
+
+[Path]
+# Written by the app (Settings → App updates); self-update.sh removes it.
+PathExists=/var/lib/cashflow/deploy/request
+Unit=cashflow-deploy.service
+
+[Install]
+WantedBy=multi-user.target
