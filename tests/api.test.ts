@@ -189,6 +189,17 @@ describe('notes', () => {
   });
 });
 
+describe('settings', () => {
+  it('the bank check threshold defaults to $200 on a database saved before it existed, and can be changed', async () => {
+    db.prepare("DELETE FROM settings WHERE key = 'bankCheckThresholdCents'").run();
+    expect((await inj({ url: '/api/settings' })).json().bankCheckThresholdCents).toBe(200_00);
+    const res = await json('PUT', '/api/settings', { bankCheckThresholdCents: 75_00 });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().bankCheckThresholdCents).toBe(75_00);
+    expect((await json('PUT', '/api/settings', { bankCheckThresholdCents: -1 })).statusCode).toBe(400);
+  });
+});
+
 describe('security', () => {
   it('sets a strict CSP and no-store on API responses', async () => {
     const res = await inj({ url: '/api/health' });

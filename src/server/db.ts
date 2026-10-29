@@ -186,9 +186,27 @@ const MIGRATIONS: string[] = [
     status         TEXT NOT NULL CHECK (status IN ('dismissed','review'))
   ) STRICT;
   `,
+  `
+  -- Bank items filed under an off-schedule type are one-offs: give the ones filed before
+  -- that rule a done one-off each, so they show on the One-offs page.
+  CREATE TEMP TABLE filed AS
+    SELECT t.id AS txn_id, (SELECT COALESCE(MAX(id), 0) FROM planned) + ROW_NUMBER() OVER (ORDER BY t.id) AS planned_id
+    FROM transactions t JOIN bills b ON b.code = t.code
+    WHERE t.source = 'plaid' AND t.planned_id IS NULL AND t.bank_transaction_id IS NOT NULL
+      AND json_extract(b.schedule, '$.kind') = 'none';
+  INSERT INTO planned (id, date, code, description, direction, amount_cents, note, status)
+    SELECT f.planned_id, t.date, t.code, t.description, t.direction, t.amount_cents, t.note, 'done'
+    FROM filed f JOIN transactions t ON t.id = f.txn_id;
+  UPDATE transactions SET planned_id = (SELECT planned_id FROM filed WHERE txn_id = transactions.id)
+    WHERE id IN (SELECT txn_id FROM filed);
+  DROP TABLE filed;
+  `,
 ];
 
 export type DB = DatabaseSync;
+
+/** The user_version a database has once every migration has run. */
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 export function openDb(path: string): DB {
   if (path !== ':memory:') {
@@ -288,6 +306,7 @@ export const DEFAULT_SETTINGS: Settings = {
   estimateMode: 'average',
   topUpRoundingCents: 50_00,
   savingsDrawCodes: ['XFER'],
+  bankCheckThresholdCents: 200_00,
 };
 
 export function getSettings(db: DB): Settings {

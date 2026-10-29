@@ -254,7 +254,8 @@ key is kept. Sandbox connections then stop showing.
 - Only Transactions and Liabilities are requested. Never Auth or Identity, which return
   account and routing numbers, and never Transfer or Payments.
 - Plaid Link (the bank sign-in window) can load only on `/connect` and `/plaid-oauth`.
-  Every other page keeps the strict `'self'`-only Content-Security-Policy.
+  Those pages also let in the one `<style>` Link adds on phones, by a nonce that's new on
+  every load. Every other page keeps the strict `'self'`-only Content-Security-Policy.
 - OAuth banks (most big ones) return to `https://cashflow.<your-tailnet>.ts.net/plaid-oauth`,
   which must be listed under **Allowed redirect URIs** in the Plaid Dashboard.
 - Trial plan: 10 connections, ever. Removing one doesn't free its slot, so the app counts
@@ -276,7 +277,12 @@ After each nightly backup, `cashflow-offsite.service` copies it to Google Drive 
 rclone **crypt** remote: contents and file names are encrypted in the container before
 upload, so Drive only ever holds scrambled files in the folder `Cashflow backups`. The
 Google connection uses the `drive.file` scope (it can only see files it created). Copies
-are kept 90 days. Settings live in `/var/lib/cashflow/rclone.conf` (owner `cashflow`, 600).
+are kept 45 days (`OFFSITE_KEEP_DAYS` in the unit). Settings live in
+`/var/lib/cashflow/rclone.conf` (owner `cashflow`, 600).
+
+App updates replace `/opt/cashflow` but not the units in `/etc/systemd/system`, so a change
+to a unit file needs copying there by hand. For example, after the retention went from 90 to
+45 days: `install -m 644 /opt/cashflow/deploy/cashflow-offsite.service /etc/systemd/system/ && systemctl daemon-reload`.
 
 **The encryption password is stored only in your password manager** (e.g. an entry named
 "Cashflow off-site backup"). Without it the off-site copies cannot be opened.
@@ -294,6 +300,23 @@ Check it ran: `pct exec <ct> -- journalctl -u cashflow-offsite.service -n 5`.
    Save the password in your password manager first; shred any plaintext copy.
 3. `systemctl start cashflow-backup` and check `journalctl -u cashflow-offsite`.
 
+### Restoring from the app
+
+**Settings → Restore from a backup → Show backups** lists the copies on Google Drive.
+Choose one, paste the backup encryption password from the password manager, and **Unlock
+and check**: the server downloads and decrypts it with that password (not the one in
+`rclone.conf`), checks the database, and shows what it holds. **Replace my data with this
+backup** then:
+
+1. carries today's passkeys and sessions into it, so nobody is locked out;
+2. saves the current data as `backups/cashflow-<time>-before-restore.db` (it goes
+   off-site too, so a restore can be undone the same way);
+3. restarts the app, which swaps the backup in before opening the database.
+
+It needs only what's already there: `rclone.conf` beside the database and rclone installed.
+The card says so when they're missing. On a rebuilt container, set up off-site backups
+first (above), then restore from the app.
+
 ### Restoring from Google Drive on any computer
 
 1. Install rclone (`winget install Rclone.Rclone`, or rclone.org/downloads).
@@ -307,5 +330,6 @@ Check it ran: `pct exec <ct> -- journalctl -u cashflow-offsite.service -n 5`.
 ## Recovery
 
 - Lost every passkey: in the Proxmox web Shell, `pct enter <ct>`, then run `cd /opt/cashflow && runuser -u cashflow -- env DB_PATH=/var/lib/cashflow/cashflow.db RP_ID=<name> ORIGINS=https://<name> node scripts/setup-token.ts`.
-- Bad data: backups are in `/var/lib/cashflow/backups`. Stop the service, copy a
-  backup over `cashflow.db` (owner `cashflow`, mode 600), start it.
+- Bad data: restore from the app (above). Or by hand: backups are in
+  `/var/lib/cashflow/backups`. Stop the service, copy a backup over `cashflow.db` (owner
+  `cashflow`, mode 600), start it.

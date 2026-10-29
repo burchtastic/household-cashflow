@@ -25,6 +25,8 @@ API, and the Dashboard, Bills, One-offs, History and Settings pages.
 - [x] Tailnet policy: only our devices, only HTTPS, nothing out from the server.
 - [x] Nightly backups plus encrypted off-site copies on Google Drive; restore tested.
 - [x] Updates from the app (Settings → App updates), with backup and automatic rollback.
+- [x] Restore from the off-site backups in the app (Settings → Restore from a backup), unlocked
+  with the backup key, which proves the key in the password manager still works.
 
 ### Feedback rounds (Oct 2026)
 - Fixed amounts get an edit pencil; only estimates get "Set amount"; estimates are grey.

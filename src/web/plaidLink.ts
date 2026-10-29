@@ -28,6 +28,9 @@ function loadScript(): Promise<void> {
   loading ??= new Promise<void>((resolve, reject) => {
     const s = document.createElement('script');
     s.src = SCRIPT;
+    // On phones, Link positions its frame with a <style> carrying this script's nonce: the one
+    // inline style the page's CSP lets in (src/server/app.ts).
+    s.nonce = document.querySelector<HTMLMetaElement>('meta[property="csp-nonce"]')?.nonce ?? '';
     s.onload = () => resolve();
     s.onerror = () => { loading = null; reject(new Error("Couldn't load Plaid Link. Check the connection and try again.")); };
     document.head.appendChild(s);

@@ -17,11 +17,11 @@ Tailscale network, behind passkey sign-in.
 
 | Page | What you do there |
 |---|---|
-| **Dashboard** | See today's checking balance, what to do next, and the next 60 days. If checking would ever go **below $0**, a red alarm takes over the top of the page. The decision card says one of: *move $X from savings by a date*; *your planned draw from savings could be smaller (or skipped)*; *no transfers needed*; or *you can sweep $X to savings*. When the bank's balance differs from the ledger's, a notice offers to use the bank's balance. Checking activity that matched no bill waits under **To review**. Below it: a projected balance chart with transfers from savings marked, savings runway, and the upcoming ledger, where you mark items Paid/Received, edit amounts and anything already recorded, and add notes. |
-| **Bills** | Recurring bills and income. Each is *fixed* (a set amount) or *auto* (estimated from the last 240 days of history). |
+| **Dashboard** | See today's checking balance, what to do next, and the next 60 days. If checking would ever go **below $0**, a red alarm takes over the top of the page. The decision card says one of: *move $X from savings by a date*; *your planned draw from savings could be smaller (or skipped)*; *no transfers needed*; or *you can sweep $X to savings*. When the bank's balance differs from the ledger's, a notice offers to use the bank's balance. Checking activity that matched no bill waits under **To review**; filing it under a one-off type puts it on the One-offs page. Below it: a projected balance chart with transfers from savings marked, savings runway, and the upcoming ledger, where you mark items Paid/Received, edit amounts and anything already recorded, and add notes (on phones, each row's buttons sit behind a ⋯). **Show recent** lists the last four transactions. |
+| **Bills & income** | Recurring bills and income. Each is *fixed* (a set amount) or *auto* (estimated from the last 240 days of history). **History** on a bill shows what it has actually been month by month over 6 months, a year or two years: average, highest, lowest and total, a bar per month against what the forecast expects, and every payment. Edit the bill from there (or with the pencil on wide screens). |
 | **One-offs** | Anything unscheduled: transfers from savings, a plumbing repair, a refund. Separate **Add expense** / **Add income** buttons; the "What was it?" field autocompletes from past entries. Log something that already happened, set up a future transfer, or plan one. |
 | **History** | Every transaction you have, filtered by a date range picker (defaults to the last 90 days) with category totals. Notes can be added or edited inline. |
-| **Settings** | Floors, horizon, estimate mode, transfer rounding; **Import from a spreadsheet** (download the template, fill in bills, history and balances, preview, import); passkeys; **App updates**; balance history; a link to **Bank connections**; **Demo mode** (disguised numbers for showing it off, this browser only). |
+| **Settings** | Floors, horizon, estimate mode, transfer rounding; **Import from a spreadsheet** (download the template, fill in bills, history and balances, preview, import); passkeys; **App updates**; **Restore from a backup** (pick an off-site copy, unlock it with the backup key, check what's in it, restore); balance history; a link to **Bank connections**; **Demo mode** (disguised numbers for showing it off, this browser only). |
 | **Bank connections** (`/connect`) | Connect banks through Plaid (read-only), fix a sign-in, **Sync now**, and choose what each account is: Checking (the forecast account), Savings, a card, or ignored. Each card shows its latest statement and which bill pays it. |
 
 **What the banks do for you** (every 4 hours, or **Sync now**):
@@ -69,7 +69,10 @@ to run out of. [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) is the full specific
   Check for updates → Update**. It backs up the database, builds, swaps, and rolls back by
   itself if the new version doesn't start.
 - **Backups:** nightly at 3:15 AM, 30 kept in the container, and an encrypted copy to
-  Google Drive (90 days). The encryption password is in your password manager.
+  Google Drive (45 days). The encryption password is in your password manager.
+- **Restore:** **Settings → Restore from a backup → Show backups**, choose one, paste the
+  backup key from the password manager, check what it holds, and restore. Your current
+  data is saved first and your passkeys are kept.
 - **A bank says "Sign-in needed"?** Bank connections → **Fix sign-in**. Never disconnect
   and reconnect: the Plaid Trial allows 10 connections ever, and removed ones still count.
 - **Locked out?** Any passkey works on any device. Lost them all: see Recovery in
@@ -111,3 +114,7 @@ release: the next **Update** in the app installs it.
 
 `data/` (database, seed, backups), `*.xlsx`, `*.csv`, `.env*` and `claude_share/` are
 gitignored. Never commit financial data or secrets.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

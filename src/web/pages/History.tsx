@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { api, type TxnWithCategory } from '../api.ts';
 import { DateRangePicker, presetRange } from '../components/DateRangePicker.tsx';
 import { EditTransactionForm } from '../components/EditTransaction.tsx';
-import { Clip, ConfirmButton, DateText, ErrorNote, Modal, PencilIcon, useLoad } from '../components/ui.tsx';
+import { ConfirmButton, ErrorNote, Modal, PencilIcon, useLoad } from '../components/ui.tsx';
 import { addDays } from '../../engine/dates.ts';
-import { localToday, money } from '../format.ts';
+import { localToday, money, shortDate } from '../format.ts';
 
 export function History() {
   const today = localToday();
@@ -37,16 +37,16 @@ export function History() {
             <span className="muted small">Already arranged with the bank; the forecast counts each on its date.</span>
           </div>
           <div className="table-wrap">
-            <table>
+            <table className="stacked">
               <thead><tr><th>Date</th><th>Item</th><th>Category</th><th className="num">Amount</th><th /></tr></thead>
               <tbody>
                 {later.data.map((t) => (
                   <tr key={t.id} className={t.direction === 'in' ? 'inflow' : ''}>
-                    <td><DateText iso={t.date} /></td>
-                    <td><Clip text={t.description} />{t.note && <div className="note small"><Clip text={t.note} /></div>}</td>
-                    <td className="small">{t.category}</td>
+                    <td className="date">{shortDate(t.date)}</td>
+                    <td className="what">{t.description}{t.note && <div className="note small">{t.note}</div>}</td>
+                    <td className="meta small">{t.category}</td>
                     <td className="num amount">{t.direction === 'in' ? '+' : '−'}{money(t.amountCents)}</td>
-                    <td>
+                    <td className="actions">
                       <div className="row-actions">
                         <button
                           className="small icon" title="Edit date, amount or note" aria-label={`Edit ${t.description}`}
@@ -93,20 +93,20 @@ export function History() {
           {category && <button className="small" onClick={() => setCategory('')}>Clear filter</button>}
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="stacked">
             <thead><tr><th>Date</th><th>Item</th><th>Category</th><th className="wide-only">Source</th><th className="num">Amount</th><th /></tr></thead>
             <tbody>
               {txns.data?.slice().reverse().map((t) => (
                 <tr key={t.id} className={t.direction === 'in' ? 'inflow' : ''}>
-                  <td><DateText iso={t.date} /></td>
-                  <td>
-                    <Clip text={t.description} />
+                  <td className="date">{shortDate(t.date)}</td>
+                  <td className="what">
+                    {t.description}
                     <NoteCell note={t.note} onSave={async (note) => { await api.setTransactionNote(t.id, note); txns.reload(); }} />
                   </td>
-                  <td className="small">{t.category}</td>
+                  <td className="meta small">{t.category}</td>
                   <td className="small faint wide-only">{t.source}</td>
                   <td className="num amount">{t.direction === 'in' ? '+' : '−'}{money(t.amountCents)}</td>
-                  <td>
+                  <td className="actions">
                     <div className="row-actions">
                       <button
                         className="small icon" title="Edit date, amount or note" aria-label={`Edit ${t.description}`}
@@ -170,7 +170,7 @@ function NoteCell({ note, onSave }: { note: string; onSave: (note: string) => Pr
   }
   return note ? (
     <button type="button" className="note small note-button" title="Edit note" onClick={() => setDraft(note)}>
-      <span className="clip">{note}</span> <PencilIcon />
+      <span>{note}</span> <PencilIcon />
     </button>
   ) : (
     <button type="button" className="link small add-note" onClick={() => setDraft('')}>+ Add note</button>

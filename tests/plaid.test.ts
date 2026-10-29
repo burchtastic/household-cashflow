@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/server/app.ts';
 import { DEMO_COOKIE } from '../src/server/demo.ts';
-import { DEFAULT_SETTINGS, insertSnapshot, loadDataset, openDb, upsertBill, type DB } from '../src/server/db.ts';
+import {
+  DEFAULT_SETTINGS, insertPlanned, insertSnapshot, loadDataset, openDb, SCHEMA_VERSION, upsertBill, type DB,
+} from '../src/server/db.ts';
 import type { Bill } from '../src/engine/index.ts';
 import { Auth, DEFAULT_SESSION, SESSION_COOKIE, type AuthConfig } from '../src/server/auth.ts';
 import {
@@ -122,13 +124,13 @@ let cookie = '';
 
 /** The app's clock; tests that care about dates set it. */
 let clock = Date.now();
-const start = (cfg: Partial<PlaidConfig> | null, at?: string) => {
+const start = (cfg: Partial<PlaidConfig> | null, at?: string, staticDir?: string) => {
   clock = at ? Date.parse(at) : Date.now();
   db = openDb(':memory:');
   loadDataset(db, { settings: DEFAULT_SETTINGS, bills: [], transactions: [], overrides: [], planned: [], snapshots: [] });
   fake = new FakePlaid();
   app = buildApp(db, {
-    timeZone: 'America/New_York', auth: AUTH, now: () => clock,
+    timeZone: 'America/New_York', auth: AUTH, now: () => clock, staticDir,
     plaid: cfg ? { config: { env: 'sandbox', clientId: 'c', secret: 's', tokenKey: key, ...cfg }, api: fake } : undefined,
   });
   cookie = `${SESSION_COOKIE}=${new Auth(db, AUTH).createSession()}`;
@@ -181,6 +183,28 @@ describe('bank connections API', () => {
         expect(res.headers['content-security-policy']).not.toContain('plaid');
         expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
       }
+    });
+
+    it("gives each connect page a fresh nonce for Link's phone stylesheet, and no other page one", async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'cf-static-'));
+      writeFileSync(join(dir, 'index.html'), '<!doctype html><html><head><title>Cashflow</title></head><body></body></html>');
+      await app.close();
+      start({}, undefined, dir);
+      const seen = new Set<string>();
+      for (const path of ['/connect', '/plaid-oauth', '/plaid-oauth?oauth_state_id=abc', '/connect']) {
+        const res = await get(path);
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['content-type']).toContain('text/html');
+        expect(res.headers['cache-control']).toBe('no-store');
+        const nonce = /<meta property="csp-nonce" nonce="([A-Za-z0-9+/=]{24})" \/>/.exec(res.body)?.[1];
+        expect(nonce).toBeDefined();
+        expect(res.headers['content-security-policy']).toContain(`style-src 'self' 'nonce-${nonce}';`);
+        seen.add(nonce!);
+      }
+      expect(seen.size).toBe(4);
+      const home = await get('/bills');
+      expect(home.body).not.toContain('csp-nonce');
+      expect(home.headers['content-security-policy']).toContain("style-src 'self';");
     });
 
     it('links a bank, storing the token encrypted and guessing only card roles', async () => {
@@ -645,9 +669,55 @@ describe('matching checking activity', () => {
     expect((await send('POST', '/api/bank-review/v1/assign', { code: 'MISC', note: 'Dinner' })).statusCode).toBe(201);
     expect((await send('POST', '/api/bank-review/atm/dismiss')).statusCode).toBe(200);
     expect(await review()).toEqual([]);
-    expect(ledger()).toEqual([{ code: 'MISC', date: '2026-10-20', amount_cents: 45_00, source: 'plaid', bank_transaction_id: 'v1', planned_id: null }]);
+    // An off-schedule type is a one-off: it shows on the One-offs page as done.
+    const [oneOff] = (await get('/api/planned')).json();
+    expect(oneOff).toMatchObject({ code: 'MISC', date: '2026-10-20', amountCents: 45_00, direction: 'out', note: 'Dinner', status: 'done' });
+    expect(ledger()).toEqual([{ code: 'MISC', date: '2026-10-20', amount_cents: 45_00, source: 'plaid', bank_transaction_id: 'v1', planned_id: oneOff.id }]);
     expect((await send('POST', '/api/bank-review/atm/dismiss')).statusCode).toBe(404);
     expect((await send('POST', '/api/bank-review/v1/assign', { code: 'NOPE' })).statusCode).toBe(404);
+
+    // Deleting it from One-offs sends the bank item back to review.
+    expect((await send('DELETE', `/api/planned/${oneOff.id}`)).statusCode).toBe(200);
+    expect(ledger()).toEqual([]);
+    expect(await review()).toMatchObject([{ transactionId: 'v1', undone: true }]);
+  });
+
+  it('review: filing under a regular bill pays that bill, not a one-off', async () => {
+    next({ added: [txn('big', { date: '2026-10-26', amount: 1500, name: 'CHASE CREDIT CRD AUTOPAY' })] });
+    await sync();
+    expect((await send('POST', '/api/bank-review/big/assign', { code: 'CHASE' })).statusCode).toBe(201);
+    expect((await get('/api/planned')).json()).toEqual([]);
+    expect(ledger()).toEqual([{ code: 'CHASE', date: '2026-10-26', amount_cents: 1500_00, source: 'plaid', bank_transaction_id: 'big', planned_id: null }]);
+    const { forecast } = (await get('/api/forecast')).json();
+    expect(forecast.events.find((e: { code: string }) => e.code === 'CHASE')).toMatchObject({ status: 'posted', amountCents: 1500_00 });
+  });
+
+  it('gives items filed before this a done one-off when the database is next opened', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'cashflow-')), 'old.db');
+    const old = openDb(path);
+    for (const b of [chase, venmo]) upsertBill(old, b);
+    const planned = insertPlanned(old, { date: '2026-10-05', code: 'MISC', description: 'Other spending', direction: 'out', amountCents: 10_00, note: 'Lunch', status: 'done' });
+    const add = old.prepare(`INSERT INTO transactions (date, code, description, direction, amount_cents, source, note, planned_id, bank_transaction_id)
+      VALUES (?, ?, ?, 'out', ?, ?, ?, ?, ?)`);
+    add.run('2026-10-05', 'MISC', 'Other spending', 10_00, 'manual', 'Lunch', planned, null);
+    add.run('2026-10-20', 'MISC', 'Other spending', 45_00, 'plaid', 'Dinner', null, 'v1');   // filed from review
+    add.run('2026-10-26', 'CHASE', 'Chase card', 1200_00, 'plaid', '', null, 'b1');          // a bill payment
+    add.run('2026-10-27', 'MISC', 'Other spending', 8_00, 'manual', '', null, null);          // typed into History
+    old.exec(`PRAGMA user_version = ${SCHEMA_VERSION - 1}`);
+    old.close();
+
+    const reopened = openDb(path);
+    expect(reopened.prepare('SELECT id, date, code, amount_cents, note, status FROM planned ORDER BY id').all()).toEqual([
+      { id: planned, date: '2026-10-05', code: 'MISC', amount_cents: 10_00, note: 'Lunch', status: 'done' },
+      { id: planned + 1, date: '2026-10-20', code: 'MISC', amount_cents: 45_00, note: 'Dinner', status: 'done' },
+    ]);
+    expect(reopened.prepare('SELECT code, amount_cents, planned_id FROM transactions ORDER BY id').all()).toEqual([
+      { code: 'MISC', amount_cents: 10_00, planned_id: planned },
+      { code: 'MISC', amount_cents: 45_00, planned_id: planned + 1 },
+      { code: 'CHASE', amount_cents: 1200_00, planned_id: null },
+      { code: 'MISC', amount_cents: 8_00, planned_id: null },
+    ]);
+    reopened.close();
   });
 
   it('a match you delete goes to review and is not made again', async () => {

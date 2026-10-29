@@ -278,6 +278,19 @@ export function forecast(input: ForecastInput): Forecast {
   };
 }
 
+/**
+ * Why a gap between the bank's balance and the ledger's (bank − ledger) is worth flagging, or
+ * null if it isn't. 'floor': the bank has less, and that takes the low point under the floor
+ * when the ledger's figure doesn't, however small. 'size': at least the threshold either way.
+ */
+export function flagBankGap({ gapCents, thresholdCents, lowCents, floorCents }: {
+  gapCents: Cents; thresholdCents: Cents; lowCents: Cents; floorCents: Cents;
+}): 'floor' | 'size' | null {
+  if (gapCents === 0) return null;
+  if (lowCents >= floorCents && lowCents + gapCents < floorCents) return 'floor';
+  return Math.abs(gapCents) >= thresholdCents ? 'size' : null;
+}
+
 function savingsOutlook(
   input: ForecastInput,
   ledger: LedgerEvent[],

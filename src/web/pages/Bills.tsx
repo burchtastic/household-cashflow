@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { Bill, Schedule } from '../../engine/index.ts';
 import { api, type BillWithStats } from '../api.ts';
-import { AsyncForm, ErrorNote, Modal, MoneyInput, useLoad } from '../components/ui.tsx';
-import { longDate, money } from '../format.ts';
+import { BillHistory } from '../components/BillHistory.tsx';
+import { AsyncForm, ErrorNote, Modal, MoneyInput, PencilIcon, useLoad } from '../components/ui.tsx';
+import { localToday, longDate, money } from '../format.ts';
 
 const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 100 > 10 && n % 100 < 14 ? 0 : n % 10 < 4 ? n % 10 : 0]}`;
 
@@ -14,8 +15,11 @@ export function describeSchedule(s: Schedule): string {
 
 export function Bills() {
   const { data, error, reload } = useLoad(api.bills);
+  // One dialog for both: Edit from a bill's history goes back to the history on Cancel.
+  const [viewing, setViewing] = useState<BillWithStats | null>(null);
   const [editing, setEditing] = useState<Bill | 'new' | null>(null);
   const [showInactive, setShowInactive] = useState(false);
+  const close = () => { setEditing(null); setViewing(null); };
 
   if (error) return <ErrorNote error={error} />;
   if (!data) return <p className="empty">Loading…</p>;
@@ -46,27 +50,36 @@ export function Bills() {
             <table>
               <thead>
                 <tr>
-                  <th>Code</th><th>Name</th><th>Schedule</th><th>How estimated</th>
-                  <th className="num">Avg</th><th className="num">Worst</th><th className="num">Estimate</th><th />
+                  <th className="wide-only">Code</th><th>Name</th><th className="wide-only">Schedule</th><th className="wide-only">How estimated</th>
+                  <th className="num wide-only">Avg</th><th className="num wide-only">Worst</th><th className="num">Estimate</th><th />
                 </tr>
               </thead>
               <tbody>
+                {/* On phones only name, estimate and History fit; the schedule tucks under the name, and Edit is in the history. */}
                 {bills.map((b) => (
                   <tr key={b.code} className={b.active ? '' : 'inactive'}>
-                    <td><code>{b.code}</code></td>
+                    <td className="wide-only"><code>{b.code}</code></td>
                     <td>
                       {b.name}
                       <div className="faint small">{b.category}{!b.active && ' · inactive'}</div>
+                      <div className="faint small phone-only">{describeSchedule(b.schedule)}</div>
                     </td>
-                    <td className="small">{describeSchedule(b.schedule)}</td>
-                    <td className="small">
+                    <td className="small wide-only">{describeSchedule(b.schedule)}</td>
+                    <td className="small wide-only">
                       {b.amountMode === 'fixed' ? 'Fixed amount' : 'From history'}
                       {b.minCents !== null && <div className="faint">min {money(b.minCents)}</div>}
                     </td>
-                    <td className="num">{b.stats.averageCents === null ? '—' : money(b.stats.averageCents)}<div className="faint small">n={b.stats.sampleSize}</div></td>
-                    <td className="num">{b.stats.worstCents === null ? '—' : money(b.stats.worstCents)}</td>
+                    <td className="num wide-only">{b.stats.averageCents === null ? '—' : money(b.stats.averageCents)}<div className="faint small">n={b.stats.sampleSize}</div></td>
+                    <td className="num wide-only">{b.stats.worstCents === null ? '—' : money(b.stats.worstCents)}</td>
                     <td className="num"><strong>{money(b.stats.estimateCents)}</strong></td>
-                    <td><div className="row-actions"><button className="small" onClick={() => setEditing(b)}>Edit</button></div></td>
+                    <td>
+                      <div className="row-actions">
+                        <button className="small" title={`What ${b.name} has been, month by month`} onClick={() => setViewing(b)}>History</button>
+                        <button className="small icon wide-only" title="Edit" aria-label={`Edit ${b.name}`} onClick={() => setEditing(b)}>
+                          <PencilIcon />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -80,15 +93,24 @@ export function Bills() {
         payment hasn't been confirmed and no known amount is set.
       </p>
 
-      <Modal title={editing === 'new' ? 'Add bill' : `Edit ${editing?.name ?? ''}`} open={editing !== null} onClose={() => setEditing(null)}>
-        {editing !== null && (
+      <Modal
+        title={editing === 'new' ? 'Add bill' : editing ? `Edit ${editing.name}` : viewing?.name ?? ''}
+        open={editing !== null || viewing !== null}
+        onClose={close}
+      >
+        {editing !== null ? (
           <BillForm
             bill={editing === 'new' ? null : editing}
             categories={data.categories}
             nextSort={Math.max(0, ...data.bills.map((b) => b.sort)) + 1}
             onCancel={() => setEditing(null)}
-            onDone={() => { setEditing(null); reload(); }}
+            onDone={() => { close(); reload(); }}
           />
+        ) : viewing && (
+          <>
+            <p className="faint small bill-history-sub">{viewing.category} · {describeSchedule(viewing.schedule)}</p>
+            <BillHistory bill={viewing} today={localToday()} onEdit={() => setEditing(viewing)} onClose={close} />
+          </>
         )}
       </Modal>
     </>

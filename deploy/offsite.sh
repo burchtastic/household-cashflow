@@ -6,7 +6,7 @@ set -eu
 
 export RCLONE_CONFIG="${RCLONE_CONFIG:-/var/lib/cashflow/rclone.conf}"
 DIR="${BACKUP_DIR:-/var/lib/cashflow/backups}"
-KEEP_DAYS="${OFFSITE_KEEP_DAYS:-90}"
+KEEP_DAYS="${OFFSITE_KEEP_DAYS:-45}"
 MIN_RECENT=7
 
 if [ ! -f "$RCLONE_CONFIG" ]; then

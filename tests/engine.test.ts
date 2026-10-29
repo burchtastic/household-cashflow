@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addDays, estimateBill, forecast, nearestOccurrence, occurrences,
+  addDays, estimateBill, flagBankGap, forecast, nearestOccurrence, occurrences,
   type Bill, type Settings, type Transaction,
 } from '../src/engine/index.ts';
 
@@ -12,6 +12,7 @@ const settings: Settings = {
   estimateMode: 'average',
   topUpRoundingCents: 0,
   savingsDrawCodes: ['XFER'],
+  bankCheckThresholdCents: 200_00,
 };
 
 function bill(over: Partial<Bill> & { code: string }): Bill {
@@ -231,5 +232,34 @@ describe('forecast', () => {
     // Two rents in 61 days ≈ 1497/month shortfall; cushion 4000.
     expect(s.monthlyShortfallCents).toBe(Math.round((3000_00 * 365.25) / 12 / 61));
     expect(s.runwayMonths).toBeCloseTo(4000_00 / s.monthlyShortfallCents, 6);
+  });
+});
+
+describe('flagBankGap', () => {
+  // Low point $1,000 against a $500 floor: $500 of headroom.
+  const gap = (gapCents: number, over: { thresholdCents?: number; lowCents?: number } = {}) =>
+    flagBankGap({ gapCents, thresholdCents: 200_00, lowCents: 1000_00, floorCents: 500_00, ...over });
+
+  it('ignores a small gap either way', () => {
+    expect(gap(0)).toBeNull();
+    expect(gap(199_99)).toBeNull();
+    expect(gap(-199_99)).toBeNull();
+  });
+
+  it('flags a gap of at least the threshold either way', () => {
+    expect(gap(200_00)).toBe('size');
+    expect(gap(-200_00)).toBe('size');
+    expect(gap(1_00, { thresholdCents: 0 })).toBe('size');
+  });
+
+  it('flags a small shortfall that takes the low point under the floor', () => {
+    expect(gap(-50_00, { lowCents: 540_00 })).toBe('floor');
+    expect(gap(-40_00, { lowCents: 540_00 })).toBeNull(); // lands exactly on the floor
+    expect(gap(-300_00, { lowCents: 540_00 })).toBe('floor');
+  });
+
+  it('leaves a small gap alone when the low point is already under the floor', () => {
+    expect(gap(-50_00, { lowCents: 400_00 })).toBeNull();
+    expect(gap(50_00, { lowCents: 460_00 })).toBeNull();
   });
 });

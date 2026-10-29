@@ -180,8 +180,8 @@ export function Connect() {
                           {ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                         </select>
                         {a.role === 'card' && (
-                          <label className="field small" style={{ marginTop: 6 }} title="The entry on your Bills page for paying this card, e.g. 'Chase card'. Its statement becomes that bill's known amount.">
-                            <span>Its payment on the Bills page</span>
+                          <label className="field small" style={{ marginTop: 6 }} title="The entry on your Bills & income page for paying this card, e.g. 'Chase card'. Its statement becomes that bill's known amount.">
+                            <span>Its payment on Bills &amp; income</span>
                             <select
                               value={a.billCode ?? ''}
                               disabled={busy}
@@ -289,7 +289,7 @@ function CardStatement({ account: a, billName }: { account: PlaidAccount; billNa
         <div className="faint">Last payment {money(s.lastPaymentCents)} on {shortDate(s.lastPaymentDate)}</div>
       )}
       <div className="muted">
-        {!a.billCode && "Pick this card's payment from your Bills page (e.g. 'Chase card') to use its statement in the forecast."}
+        {!a.billCode && "Pick this card's payment from your Bills & income page (e.g. 'Chase card') to use its statement in the forecast."}
         {a.billCode && use && use.problem !== null && use.problem}
         {a.billCode && use && use.problem === null && (use.keptManual
           ? `You typed in an amount for the ${shortDate(use.occurrenceDate)} ${billName(use.billCode)} payment, so it's left as is.`

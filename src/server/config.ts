@@ -1,11 +1,14 @@
+import { dirname, join } from 'node:path';
 import { DEFAULT_SESSION, type AuthConfig } from './auth.ts';
 import { loadPlaidConfig } from './plaid.ts';
 
 const list = (s: string | undefined, fallback: string[]) =>
   s ? s.split(',').map((x) => x.trim()).filter(Boolean) : fallback;
 
+const dbPath = process.env.DB_PATH ?? 'data/cashflow.db';
+
 export const config = {
-  dbPath: process.env.DB_PATH ?? 'data/cashflow.db',
+  dbPath,
   // Loopback by default. On Proxmox, Tailscale Serve proxies to this (see docs/DEPLOY.md).
   host: process.env.HOST ?? '127.0.0.1',
   port: Number(process.env.PORT ?? 8787),
@@ -20,6 +23,13 @@ export const config = {
       versionFile: process.env.VERSION_FILE ?? 'version.json',
     }
     : undefined,
+  // Restoring from the off-site backups: on only while the rclone config beside the database
+  // exists (docs/DEPLOY.md → Off-site backups). The backups folder takes the pre-restore copy.
+  restore: {
+    rcloneConfig: process.env.RCLONE_CONFIG ?? join(dirname(dbPath), 'rclone.conf'),
+    dbPath,
+    backupDir: process.env.BACKUP_DIR ?? join(dirname(dbPath), 'backups'),
+  },
   // Bank connections: on only when a credentials file exists (docs/DEPLOY.md → Plaid).
   plaid: loadPlaidConfig(),
   auth: {

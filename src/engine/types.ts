@@ -85,6 +85,8 @@ export interface Settings {
   topUpRoundingCents: Cents;
   /** Transaction codes that represent money moved from savings into checking. */
   savingsDrawCodes: string[];
+  /** Differences between the bank's balance and the ledger's smaller than this aren't flagged (see flagBankGap). */
+  bankCheckThresholdCents: Cents;
 }
 
 /** posted: happened. known: amount entered ahead of time. scheduled: a fixed amount. estimated: a guess from history. */

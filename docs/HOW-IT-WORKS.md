@@ -98,8 +98,11 @@ matched to what the ledger expects, **by amount**:
   instead of adding another.
 - Pending transactions count. When one posts, the entry follows it; if it disappears
   without posting, the entry goes (a one-off goes back to planned).
-- Anything that matches nothing is listed under **To review** on the Dashboard. **File** it
-  under any code (with an optional note), or **Dismiss** it. Deleting an automatic match
+- Anything that matches nothing is listed under **To review** on the Dashboard and at the
+  top of One-offs. **File** it
+  under any code (with an optional note), or **Dismiss** it. Filed under a one-off type
+  (schedule *none*), it becomes a done one-off and shows under One-offs → Done; filed under
+  a regular bill, it's that bill's payment. Deleting an automatic match, or a filed one-off,
   sends that bank transaction to review instead of matching it again.
 - Credit card purchases are never matched one by one; the card's statement covers them.
 
@@ -107,9 +110,13 @@ matched to what the ledger expects, **by amount**:
 
 When a bank account is set as **Checking** (or **Savings**) on Bank connections, the
 Dashboard compares the bank's balance with the ledger's for today. Checking uses the
-bank's *available* balance, which already takes out pending charges. If they differ, a
-notice shows both and the difference, and lists anything due by today that isn't marked
-done yet, since the bank may not have it. **Use the bank's balance** records it as today's
+bank's *available* balance, which already takes out pending charges. If they differ by at
+least Settings → Ignore bank differences under (default $200), either way, a notice shows
+both and the difference, and lists anything due by today that isn't marked done yet, since
+the bank may not have it. A smaller gap is shown only when the bank has less and that would
+take the account under its floor when the ledger's figure doesn't: for checking, the low
+point through the horizon; for savings, today's balance. The notice then says so. Setting
+the threshold to $0 shows every difference. **Use the bank's balance** records it as today's
 balance: the same as typing it in, so everything dated today or earlier counts as done.
 **Dismiss** hides the notice until either figure changes. Nothing is replaced automatically.
 
@@ -144,6 +151,12 @@ Income can only be marked once it has arrived.
 
 **Planned** one-offs show a gold chip. The pencil next to one edits it (date, amount, type,
 note) or deletes it, right on the Dashboard.
+
+On phones, each row's buttons fold into one **⋯**; tapping it slides them out over the row.
+A row with nothing to do has no ⋯.
+
+**Show recent**, at the top of the Upcoming list, shows the last four transactions from
+History (within 90 days), with a button to the full list.
 
 ### Amounts
 

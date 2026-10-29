@@ -79,13 +79,33 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
   const y = (c: number) => top + (1 - (c - yMin) / (yMax - yMin)) * plotH;
   const negative = yMin < 0;
 
-  const stepPath = (pts: typeof points) =>
-    pts.map((p, i) => (i === 0 ? `M${x(p.date)},${y(p.balanceCents)}` : `H${x(p.date)}V${y(p.balanceCents)}`)).join('');
+  // Each day's step is drawn in two parts: solid for the amounts you know, then dotted for the
+  // estimates, so a guessed bill doesn't look as certain as one you've entered.
+  const guessOn = (d: string) => (eventsByDate.get(d) ?? [])
+    .filter((e) => e.status === 'estimated')
+    .reduce((s, e) => s + (e.direction === 'in' ? e.amountCents : -e.amountCents), 0);
+  const stepPaths = (pts: typeof points) => {
+    let solid = '';
+    let dotted = '';
+    pts.forEach((p, i) => {
+      const px = x(p.date);
+      if (i === 0) { solid = `M${px},${y(p.balanceCents)}`; return; }
+      const guess = guessOn(p.date);
+      solid += `H${px}V${y(p.balanceCents - guess)}`;
+      if (guess !== 0) {
+        dotted += `M${px},${y(p.balanceCents - guess)}V${y(p.balanceCents)}`;
+        solid += `M${px},${y(p.balanceCents)}`;
+      }
+    });
+    return { solid, dotted };
+  };
   const todayIdx = points.findIndex((p) => p.date >= today);
-  const past = todayIdx > 0 ? points.slice(0, todayIdx + 1) : [];
-  const future = todayIdx >= 0 ? points.slice(Math.max(0, todayIdx)) : points;
+  const past = todayIdx > 0 ? stepPaths(points.slice(0, todayIdx + 1)) : null;
+  const future = stepPaths(todayIdx >= 0 ? points.slice(Math.max(0, todayIdx)) : points);
 
-  const xTicks = points.filter((p, i) => i === 0 || p.date.endsWith('-01') || p.date.endsWith('-15'));
+  // The 1st and 15th of each month, and the first day too unless it would crowd the next one.
+  const marks = points.filter((p) => p.date.endsWith('-01') || p.date.endsWith('-15'));
+  const xTicks = marks.length && x(marks[0].date) - x(points[0].date) < 44 ? marks : [points[0], ...marks];
 
   const onMove = (ev: React.PointerEvent<SVGSVGElement>) => {
     const rect = ev.currentTarget.getBoundingClientRect();
@@ -99,6 +119,34 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
   const hoverEvents = h ? eventsByDate.get(h.date) ?? [] : [];
   const showLowLabel = toDayNumber(lowest.date) >= x0;
   const firstNegative = points.find((p) => p.date >= today && p.balanceCents < 0);
+
+  // The low is meant to sit just above the floor, so their labels often land on each other. Try
+  // the floor label at the right end of its line, then under it, then at the left end, and the low
+  // label under its dot, then over it, and keep the first pair that stay clear of each other.
+  const bottom = top + plotH;
+  const fy = y(floorCents);
+  const floorText = `Floor ${money0(floorCents)}`;
+  const floorSpots: ChartLabel[] = [
+    { x: width - M.right, y: fy - 5, anchor: 'end', text: floorText },
+    ...(fy + 14 <= bottom ? [{ x: width - M.right, y: fy + 14, anchor: 'end', text: floorText } as const] : []),
+    { x: M.left + 4, y: fy - 5, anchor: 'start', text: floorText },
+    ...(fy + 14 <= bottom ? [{ x: M.left + 4, y: fy + 14, anchor: 'start', text: floorText } as const] : []),
+  ];
+  const zeroLabel: ChartLabel | null = negative
+    ? { x: width - M.right - 4, y: y(0) + (bottom - y(0) > 18 ? 14 : -5), anchor: 'end', text: 'Overdrawn below $0' }
+    : null;
+  const lx = x(lowest.date);
+  const ly = y(lowest.balanceCents);
+  const lowText = `Low ${money0(lowest.balanceCents)}`;
+  const lowAnchor = lx > width - 120 ? 'end' : 'middle';
+  const lowSpots: ChartLabel[] = [
+    ...(ly <= bottom - 20 ? [{ x: lx, y: ly + 18, anchor: lowAnchor, text: lowText } as const] : []),
+    { x: lx, y: ly - 12, anchor: lowAnchor, text: lowText },
+  ];
+  const clear = (a: ChartLabel, b: ChartLabel | null) => !b || !labelsTouch(a, b);
+  const pairs = floorSpots.flatMap((f) => (showLowLabel ? lowSpots : [null]).map((l) => [f, l] as const));
+  const [floorLabel, lowLabel] = pairs.find(([f, l]) => clear(f, zeroLabel) && (!l || (clear(l, f) && clear(l, zeroLabel))))
+    ?? pairs[0];
 
   return (
     <div className="chart" ref={wrapRef}>
@@ -136,15 +184,9 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
           <>
             <rect className="negative-zone" x={M.left} width={plotW} y={y(0)} height={top + plotH - y(0)} />
             <line className="zero-line" x1={M.left} x2={width - M.right} y1={y(0)} y2={y(0)} />
-            <text className="zero-label" x={width - M.right - 4} y={y(0) + (top + plotH - y(0) > 18 ? 14 : -5)} textAnchor="end">
-              Overdrawn below $0
-            </text>
           </>
         )}
-        <line className="floor-line" x1={M.left} x2={width - M.right} y1={y(floorCents)} y2={y(floorCents)} />
-        <text className="floor-label" x={width - M.right} y={y(floorCents) - 5} textAnchor="end">
-          Floor {money0(floorCents)}
-        </text>
+        <line className="floor-line" x1={M.left} x2={width - M.right} y1={fy} y2={fy} />
 
         {todayIdx >= 0 && (
           <>
@@ -153,10 +195,21 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
           </>
         )}
 
-        {past.length > 1 && <path className="series past" d={stepPath(past)} />}
-        <path className="series" d={stepPath(future)} />
+        {past && (
+          <>
+            <path className="series past" d={past.solid} />
+            <path className="series past guess" d={past.dotted} />
+          </>
+        )}
+        <path className="series" d={future.solid} />
+        <path className="series guess" d={future.dotted} />
         {/* The same line again in red wherever it is below $0. */}
-        {negative && <path className="series below-zero" d={stepPath(future)} clipPath={`url(#${clipId})`} />}
+        {negative && (
+          <>
+            <path className="series below-zero" d={future.solid} clipPath={`url(#${clipId})`} />
+            <path className="series below-zero guess" d={future.dotted} clipPath={`url(#${clipId})`} />
+          </>
+        )}
 
         {draws.map((d) => {
           const cx = x(d.date);
@@ -172,17 +225,13 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
           );
         })}
 
-        {showLowLabel && (
+        {/* Labels go over the line so it never runs through their text. */}
+        {zeroLabel && <LabelText className="zero-label" label={zeroLabel} />}
+        <LabelText className="floor-label" label={floorLabel} />
+        {lowLabel && (
           <g>
-            <circle className="marker low" cx={x(lowest.date)} cy={y(lowest.balanceCents)} r={5} />
-            <text
-              className="floor-label"
-              x={x(lowest.date)}
-              y={y(lowest.balanceCents) + (y(lowest.balanceCents) > top + plotH - 20 ? -12 : 18)}
-              textAnchor={x(lowest.date) > width - 120 ? 'end' : 'middle'}
-            >
-              Low {money0(lowest.balanceCents)}
-            </text>
+            <circle className="marker low" cx={lx} cy={ly} r={5} />
+            <LabelText className="floor-label" label={lowLabel} />
           </g>
         )}
 
@@ -195,6 +244,12 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
         {/* Hit area spanning the whole plot. */}
         <rect x={M.left} y={top} width={plotW} height={plotH} fill="transparent" />
       </svg>
+      {future.dotted && (
+        <div className="chart-key">
+          <svg viewBox="0 0 10 16" aria-hidden="true"><path className="series guess" d="M5,3V13" /></svg>
+          Dotted steps are estimates
+        </div>
+      )}
 
       {h && (
         <div
@@ -212,7 +267,7 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
           {hoverEvents.length > 0 ? (
             <ul>
               {hoverEvents.map((e) => (
-                <li key={e.key} className={isDraw(e) ? 'draw' : undefined}>
+                <li key={e.key} className={[isDraw(e) && 'draw', e.status === 'estimated' && 'guess'].filter(Boolean).join(' ') || undefined}>
                   <span>{e.name}</span>
                   <span className="num">{e.direction === 'in' ? '+' : '−'}{money(e.amountCents)}</span>
                 </li>
@@ -227,8 +282,26 @@ export function BalanceChart({ daily, events, today, floorCents, lowest, pastDay
   );
 }
 
+interface ChartLabel { x: number; y: number; anchor: 'start' | 'middle' | 'end'; text: string }
+
+function LabelText({ className, label }: { className: string; label: ChartLabel }) {
+  return <text className={`${className} halo`} x={label.x} y={label.y} textAnchor={label.anchor}>{label.text}</text>;
+}
+
+/** Whether two 11px labels would touch, from a generous guess at their size (y is the baseline). */
+function labelsTouch(a: ChartLabel, b: ChartLabel): boolean {
+  const box = (l: ChartLabel) => {
+    const w = l.text.length * 6.8;
+    const left = l.anchor === 'start' ? l.x : l.anchor === 'end' ? l.x - w : l.x - w / 2;
+    return { left, right: left + w, top: l.y - 10, bottom: l.y + 3 };
+  };
+  const p = box(a);
+  const q = box(b);
+  return p.left < q.right + 6 && q.left < p.right + 6 && p.top < q.bottom + 2 && q.top < p.bottom + 2;
+}
+
 /** Round the domain out to tidy steps and return the tick values. */
-function niceScale(min: number, max: number): [number, number, number[]] {
+export function niceScale(min: number, max: number): [number, number, number[]] {
   const span = Math.max(1, max - min);
   const rough = span / 5;
   const pow = 10 ** Math.floor(Math.log10(rough));

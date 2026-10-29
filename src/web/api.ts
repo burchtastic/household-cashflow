@@ -7,8 +7,10 @@ import type { AccountRole, BankTransaction, PlaidAccountRow, PlaidItemRow } from
 import type { ItemSyncResult } from '../server/sync.ts';
 import type { StatementPlan } from '../server/statements.ts';
 import type { BankBalance, ImportSummary } from '../server/app.ts';
+import type { BackupFile, BackupSummary, LastRestore } from '../server/restore.ts';
 
 export type { DeployStatus, Version, AccountRole, BankTransaction, ItemSyncResult, BankBalance, ImportSummary };
+export type { BackupFile, BackupSummary, LastRestore };
 export type ReviewItem = BankTransaction & { direction: 'in' | 'out'; undone: boolean };
 export type BankBalances = { enabled: false } | { enabled: true; checking: BankBalance | null; savings: BankBalance | null };
 export type StatementUse =
@@ -129,6 +131,10 @@ export const api = {
   saveSettings: (s: Partial<Settings>) => request<Settings>('PUT', '/api/settings', s),
   deployInfo: () => get<DeployInfo>('/api/admin/deploy'),
   requestDeploy: (action: 'check' | 'deploy') => request('POST', '/api/admin/deploy', { action }),
+  restoreInfo: () => get<{ enabled: boolean; last: LastRestore | null }>('/api/admin/restore'),
+  backups: () => get<BackupFile[]>('/api/admin/restore/backups'),
+  checkBackup: (name: string, key: string) => request<BackupSummary>('POST', '/api/admin/restore/check', { name, key }),
+  restoreBackup: (name: string) => request<{ restarting: true; savedAs: string }>('POST', '/api/admin/restore/apply', { name }),
   plaid: () => get<PlaidInfo>('/api/plaid'),
   plaidLinkToken: (itemId?: string) => request<{ linkToken: string }>('POST', '/api/plaid/link-token', itemId ? { itemId } : {}),
   plaidExchange: (publicToken: string, institution: { id: string; name: string }) =>

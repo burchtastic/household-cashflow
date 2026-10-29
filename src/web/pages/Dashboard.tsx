@@ -1,10 +1,14 @@
-import { useState, type ReactNode } from 'react';
-import { diffDays } from '../../engine/dates.ts';
+import { Fragment, useState, type ReactNode } from 'react';
+import { addDays, diffDays } from '../../engine/dates.ts';
+import { flagBankGap } from '../../engine/forecast.ts';
 import type { Forecast, LedgerEvent, Settings } from '../../engine/index.ts';
-import { api, type BankBalance, type BillWithStats, type ReviewItem } from '../api.ts';
+import { api, type BankBalance } from '../api.ts';
 import { BalanceChart } from '../components/BalanceChart.tsx';
+import { ToReview } from '../components/BankReview.tsx';
 import { EditTransactionForm } from '../components/EditTransaction.tsx';
-import { AsyncForm, DateText, ErrorNote, Modal, MoneyInput, PencilIcon, StatusChip, useLoad } from '../components/ui.tsx';
+import {
+  AsyncForm, DateText, ErrorNote, Modal, MoneyInput, PencilIcon, RowActions, StatusChip, useLoad, type RowAction,
+} from '../components/ui.tsx';
 import { OneOffForm } from './OneOffs.tsx';
 import { localToday, longDate, money, money0, relativeDays, shortDate } from '../format.ts';
 
@@ -23,6 +27,7 @@ export function Dashboard() {
   const { data, error, reload } = useLoad(api.forecast);
   const bank = useLoad(api.bankBalances);
   const [action, setAction] = useState<Action>(null);
+  const [showRecent, setShowRecent] = useState(false);
   const close = () => setAction(null);
   const done = () => { close(); reload(); };
 
@@ -36,7 +41,7 @@ export function Dashboard() {
           in <a href="/#/settings">Settings → Import from a spreadsheet</a>.
         </p>
         <p className="muted small">
-          Or add bills on the <a href="/#/bills">Bills</a> page, then enter today's checking balance here.
+          Or add bills on the <a href="/#/bills">Bills &amp; income</a> page, then enter today's checking balance here.
         </p>
         <div className="form-actions" style={{ justifyContent: 'flex-start' }}>
           <button className="primary" onClick={() => setAction({ kind: 'balance', account: 'checking' })}>Enter checking balance</button>
@@ -56,10 +61,19 @@ export function Dashboard() {
     <>
       <OverdraftAlert f={f} />
       {bank.data?.enabled && bank.data.checking && (
-        <BankCheck key={`c${bank.data.checking.amountCents}:${f.todayBalanceCents}`} account="checking" bank={bank.data.checking} ledgerCents={f.todayBalanceCents} f={f} onUsed={reload} />
+        <BankCheck
+          key={`c${bank.data.checking.amountCents}:${f.todayBalanceCents}`} account="checking" bank={bank.data.checking}
+          ledgerCents={f.todayBalanceCents} low={f.lowest} floorCents={settings.bufferFloorCents}
+          thresholdCents={settings.bankCheckThresholdCents} f={f} onUsed={reload}
+        />
       )}
       {bank.data?.enabled && bank.data.savings && f.savings && (
-        <BankCheck key={`s${bank.data.savings.amountCents}:${f.savings.balanceTodayCents}`} account="savings" bank={bank.data.savings} ledgerCents={f.savings.balanceTodayCents} f={f} onUsed={reload} />
+        // Savings has no daily projection: today's balance is its low point.
+        <BankCheck
+          key={`s${bank.data.savings.amountCents}:${f.savings.balanceTodayCents}`} account="savings" bank={bank.data.savings}
+          ledgerCents={f.savings.balanceTodayCents} low={{ date: f.today, balanceCents: f.savings.balanceTodayCents }}
+          floorCents={f.savings.floorCents} thresholdCents={settings.bankCheckThresholdCents} f={f} onUsed={reload}
+        />
       )}
       {staleDays > 7 && (
         <div className="banner warn">
@@ -135,8 +149,11 @@ export function Dashboard() {
       <section className="card" style={{ marginTop: 16 }}>
         <div className="card-head">
           <h2>Upcoming</h2>
-          <span className="muted small">{f.events.filter((e) => e.date > f.today).length} items</span>
+          <button className="small" aria-expanded={showRecent} onClick={() => setShowRecent(!showRecent)}>
+            {showRecent ? 'Hide recent' : 'Show recent'}
+          </button>
         </div>
+        {showRecent && <Recent today={f.today} refresh={f} />}
         <EventTable
           events={f.events.filter((e) => e.date > f.today)}
           today={f.today}
@@ -177,78 +194,47 @@ function modalTitle(a: Action): string {
 }
 
 /** Overdrawing checking is the one outcome this app exists to prevent, so it gets the loudest warning on the page. */
-/**
- * Checking activity that matched nothing (src/server/reconcile.ts). Filing it records it
- * under a code; dismissing leaves it out for good.
- */
-function ToReview({ onChanged }: { onChanged: () => void }) {
-  const items = useLoad(api.bankReview);
-  const bills = useLoad(api.bills);
-  if (!items.data?.length || !bills.data) return null;
-  const done = () => { items.reload(); onChanged(); };
-  return (
-    <section className="card" style={{ marginTop: 16 }}>
-      <div className="card-head">
-        <h2>To review</h2>
-        <span className="muted small">Checking activity that didn't match anything. File it, or dismiss it.</span>
-      </div>
-      <ErrorNote error={items.error} />
-      <div className="table-wrap">
-        <table>
-          <thead><tr><th>Date</th><th>At the bank</th><th className="num">Amount</th><th>File as</th></tr></thead>
-          <tbody>
-            {items.data.map((t) => <ReviewRow key={t.transactionId} item={t} bills={bills.data!.bills} onDone={done} />)}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
+const RECENT_COUNT = 4;
 
-function ReviewRow({ item: t, bills, onDone }: { item: ReviewItem; bills: BillWithStats[]; onDone: () => void }) {
-  const choices = bills.filter((b) => b.direction === t.direction);
-  const [code, setCode] = useState('');
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const run = async (fn: () => Promise<unknown>) => {
-    setBusy(true);
-    setError(null);
-    try { await fn(); onDone(); } catch (e) { setError((e as Error).message); setBusy(false); }
-  };
+/** The last few transactions from History, newest first, above what's coming. */
+function Recent({ today, refresh }: { today: string; refresh: unknown }) {
+  // Reloads whenever the forecast does, so a payment just confirmed shows up here too.
+  const recent = useLoad(() => api.transactions({ from: addDays(today, -90), to: today }), [refresh]);
+  const last = recent.data?.slice(-RECENT_COUNT).reverse();
   return (
-    <tr>
-      <td className="small">{shortDate(t.date)}</td>
-      <td>
-        {t.merchantName || t.name}
-        {t.pending && <span className="chip" style={{ marginLeft: 6 }}>Pending</span>}
-        {t.undone && <div className="faint small">You undid its match.</div>}
-        <ErrorNote error={error} />
-      </td>
-      <td className="num">{money(t.direction === 'in' ? t.amountCents : -t.amountCents)}</td>
-      <td>
-        <div className="row-actions">
-          <select value={code} disabled={busy} aria-label="File as" onChange={(e) => setCode(e.target.value)}>
-            <option value="">Choose…</option>
-            {choices.map((b) => <option key={b.code} value={b.code}>{b.name}</option>)}
-          </select>
-          <input placeholder="Note" value={note} maxLength={200} disabled={busy} onChange={(e) => setNote(e.target.value)} style={{ width: 120 }} />
-          <button className="small primary" disabled={busy || !code} onClick={() => run(() => api.fileBankItem(t.transactionId, code, note))}>File</button>
-          <button className="small" disabled={busy} onClick={() => run(() => api.dismissBankItem(t.transactionId))}>Dismiss</button>
+    <div className="recent">
+      <h3 className="muted">Recent</h3>
+      <ErrorNote error={recent.error} />
+      {!last ? <p className="empty">Loading…</p> : last.length === 0 ? <p className="empty">Nothing in the last 90 days.</p> : (
+        <div className="table-wrap">
+          <table>
+            <tbody>
+              {last.map((t) => (
+                <tr key={t.id} className={`past${t.direction === 'in' ? ' inflow' : ''}`}>
+                  <td className="num date" style={{ textAlign: 'left' }}><DateText iso={t.date} /></td>
+                  <td>{t.description}{t.note && <div className="note small">{t.note}</div>}</td>
+                  <td className="num amount">{t.direction === 'in' ? '+' : '−'}{money(t.amountCents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </td>
-    </tr>
+      )}
+      <a className="btn small" href="/#/history">Show more in History</a>
+    </div>
   );
 }
 
 const DISMISSED = 'cashflow:bank-check-dismissed';
 
 /**
- * The bank's balance next to the ledger's. Shown only when they differ; the bank's figure
- * replaces the ledger's only when asked.
+ * The bank's balance next to the ledger's. Shown only when they differ by at least the
+ * threshold, or by less if it would take the low point under the floor (flagBankGap); the
+ * bank's figure replaces the ledger's only when asked.
  */
-function BankCheck({ account, bank, ledgerCents, f, onUsed }: {
-  account: 'checking' | 'savings'; bank: BankBalance; ledgerCents: number; f: Forecast; onUsed: () => void;
+function BankCheck({ account, bank, ledgerCents, low, floorCents, thresholdCents, f, onUsed }: {
+  account: 'checking' | 'savings'; bank: BankBalance; ledgerCents: number; low: Forecast['lowest'];
+  floorCents: number; thresholdCents: number; f: Forecast; onUsed: () => void;
 }) {
   // Dismissing hides this account's notice until the bank's balance or the ledger's changes.
   const key = `${account}:${bank.amountCents}:${ledgerCents}`;
@@ -258,7 +244,8 @@ function BankCheck({ account, bank, ledgerCents, f, onUsed }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const diff = bank.amountCents - ledgerCents;
-  if (diff === 0 || dismissed) return null;
+  const flag = flagBankGap({ gapCents: diff, thresholdCents, lowCents: low.balanceCents, floorCents });
+  if (!flag || dismissed) return null;
 
   const bankName = [...new Set(bank.accounts.map((a) => a.institution))].join(' + ');
   const fetched = new Date(bank.fetchedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -285,6 +272,9 @@ function BankCheck({ account, bank, ledgerCents, f, onUsed }: {
           {bankName} says {account} has <strong>{money(bank.amountCents)}</strong>
           {account === 'checking' && ' available'}; the ledger has <strong>{money(ledgerCents)}</strong> for today.
           {' '}That's <strong>{money(Math.abs(diff))} {diff > 0 ? 'more' : 'less'}</strong> at the bank.
+          {flag === 'floor' && (
+            <> Enough to take {account} below your {money0(floorCents)} floor{low.date > f.today && ` by ${shortDate(low.date)}`}.</>
+          )}
         </div>
         <div className="muted small">
           Bank balance as of {fetched}.
@@ -458,7 +448,11 @@ function SavingsTile({ f, onUpdate }: { f: Forecast; onUpdate: () => void }) {
           </span>
         )}
         <div>
-          {money0(s.balanceTodayCents)} saved · short {money0(s.monthlyShortfallCents)}/mo ·{' '}
+          {money0(s.balanceTodayCents)} saved ·{' '}
+          {/* Below zero, income beats bills: there's no shortfall to cover. */}
+          {s.monthlyShortfallCents > 0
+            ? `short ${money0(s.monthlyShortfallCents)}/mo`
+            : `bills covered, ${money0(-s.monthlyShortfallCents)}/mo to spare`} ·{' '}
           <button className="link small" onClick={onUpdate}>update</button>
         </div>
       </div>
@@ -485,6 +479,33 @@ function EventTable({ events, today, floor, onAction, onChanged }: {
   const dueSoon = (e: LedgerEvent) =>
     e.date <= today || (diffDays(e.date, today) <= CONFIRM_AHEAD_DAYS && nextOpen.get(e.code) === e.key);
 
+  // What a row can do. Wide screens show these as buttons; phones tuck them behind a ⋯.
+  const actionsFor = (e: LedgerEvent): RowAction[] => {
+    const out: RowAction[] = [];
+    if (e.period !== null && e.status !== 'posted') {
+      if (dueSoon(e)) {
+        out.push({
+          label: e.direction === 'in' ? 'Received…' : e.date > today ? 'Paid / set up…' : 'Paid…',
+          onSelect: () => onAction({ kind: 'confirm', event: e }),
+        });
+      }
+      out.push(e.status === 'estimated'
+        ? { label: 'Set amount', onSelect: () => onAction({ kind: 'known', event: e }) }
+        : { label: 'Edit amount', icon: <PencilIcon />, title: 'Edit this amount', onSelect: () => onAction({ kind: 'known', event: e }) });
+    }
+    if (e.plannedId !== null && e.status === 'planned') {
+      if (dueSoon(e)) out.push({ label: 'Done', onSelect: () => run(() => api.completePlanned(e.plannedId!, e.date, e.amountCents)) });
+      out.push({ label: 'Edit', icon: <PencilIcon />, title: 'Edit this one-off', onSelect: () => onAction({ kind: 'planned', event: e }) });
+    }
+    if (e.status === 'posted' && e.transactionId !== null) {
+      out.push(
+        { label: 'Edit', icon: <PencilIcon />, title: 'Edit date, amount or note', onSelect: () => onAction({ kind: 'edit', event: e }) },
+        { label: 'Undo', className: 'link', title: 'Remove this confirmation', onSelect: () => run(() => api.deleteTransaction(e.transactionId!)) },
+      );
+    }
+    return out;
+  };
+
   return (
     <div className="table-wrap">
       <ErrorNote error={error} />
@@ -499,25 +520,22 @@ function EventTable({ events, today, floor, onAction, onChanged }: {
         <tbody>
           {events.map((e) => {
             const balance = <>{e.balanceCents < 0 ? '⚠ ' : e.balanceCents < floor && '▼ '}{money(e.balanceCents)}</>;
+            const rowClass = [
+              e.direction === 'in' ? 'inflow' : '', e.balanceCents < floor ? 'below-floor' : '',
+              e.balanceCents < 0 ? 'negative' : '',
+              e.date <= today ? 'past' : '', e.status === 'estimated' ? 'guess' : '',
+            ].join(' ');
+            const raised = e.raisedFromCents != null;
             return (
-            <tr
-              key={e.key}
-              className={[
-                e.direction === 'in' ? 'inflow' : '', e.balanceCents < floor ? 'below-floor' : '',
-                e.balanceCents < 0 ? 'negative' : '',
-                e.date <= today ? 'past' : '', e.status === 'estimated' ? 'guess' : '',
-              ].join(' ')}
-            >
-              <td className="num" style={{ textAlign: 'left' }}><DateText iso={e.date} /></td>
+            <Fragment key={e.key}>
+            <tr className={`${rowClass}${raised ? ' has-alert' : ''}`}>
+              <td className="num date" style={{ textAlign: 'left' }}><DateText iso={e.date} /></td>
               <td>
                 {e.name}
                 <span className="phone-only status-under"><StatusChip status={e.status} direction={e.direction} future={e.date > today} /></span>
                 {e.note && <div className="note small">{e.note}</div>}
                 {e.status === 'posted' && e.estimateCents !== null && e.estimateCents !== e.amountCents && (
                   <div className="faint small">est. {money(e.estimateCents)}</div>
-                )}
-                {e.raisedFromCents != null && (
-                  <div className="raised small">est. {money(e.raisedFromCents)} · raised: {money(e.amountCents)} already on the card</div>
                 )}
               </td>
               <td className="wide-only"><StatusChip status={e.status} direction={e.direction} future={e.date > today} /></td>
@@ -526,56 +544,17 @@ function EventTable({ events, today, floor, onAction, onChanged }: {
                 <div className="phone-only balance">{balance}</div>
               </td>
               <td className="num balance wide-only">{balance}</td>
-              <td>
-                <div className="row-actions">
-                  {e.period !== null && e.status !== 'posted' && (
-                    <>
-                      {dueSoon(e) && (
-                        <button className="small" onClick={() => onAction({ kind: 'confirm', event: e })}>
-                          {e.direction === 'in' ? 'Received…' : e.date > today ? 'Paid / set up…' : 'Paid…'}
-                        </button>
-                      )}
-                      {e.status === 'estimated' ? (
-                        <button className="small" onClick={() => onAction({ kind: 'known', event: e })}>Set amount</button>
-                      ) : (
-                        <button
-                          className="small icon" title="Edit this amount" aria-label={`Edit ${e.name} amount`}
-                          onClick={() => onAction({ kind: 'known', event: e })}
-                        >
-                          <PencilIcon />
-                        </button>
-                      )}
-                    </>
-                  )}
-                  {e.plannedId !== null && e.status === 'planned' && dueSoon(e) && (
-                    <button className="small" onClick={() => run(() => api.completePlanned(e.plannedId!, e.date, e.amountCents))}>
-                      Done
-                    </button>
-                  )}
-                  {e.plannedId !== null && e.status === 'planned' && (
-                    <button
-                      className="small icon" title="Edit this one-off" aria-label={`Edit ${e.name}`}
-                      onClick={() => onAction({ kind: 'planned', event: e })}
-                    >
-                      <PencilIcon />
-                    </button>
-                  )}
-                  {e.status === 'posted' && e.transactionId !== null && (
-                    <button
-                      className="small icon" title="Edit date, amount or note" aria-label={`Edit ${e.name}`}
-                      onClick={() => onAction({ kind: 'edit', event: e })}
-                    >
-                      <PencilIcon />
-                    </button>
-                  )}
-                  {e.status === 'posted' && e.transactionId !== null && (
-                    <button className="small link" title="Remove this confirmation" onClick={() => run(() => api.deleteTransaction(e.transactionId!))}>
-                      Undo
-                    </button>
-                  )}
-                </div>
-              </td>
+              <td className="row-menu-cell"><RowActions label={e.name} actions={actionsFor(e)} /></td>
             </tr>
+            {/* Alerts get a line of their own across every column, not a squeeze under the name. */}
+            {raised && (
+              <tr className={`${rowClass} alert-row`}>
+                <td colSpan={6}>
+                  <div className="raised small">est. {money(e.raisedFromCents!)} · raised: {money(e.amountCents)} already on the card</div>
+                </td>
+              </tr>
+            )}
+            </Fragment>
             );
           })}
         </tbody>
@@ -653,7 +632,7 @@ function KnownForm({ event, onDone, onCancel }: { event: LedgerEvent; onDone: ()
         </p>
       ) : (
         <p className="muted small">
-          Changes {event.name} on {shortDate(event.dueDate ?? event.date)} only. To change every one, edit it on the Bills
+          Changes {event.name} on {shortDate(event.dueDate ?? event.date)} only. To change every one, edit it on the Bills &amp; income
           page. Normally: {usual}.
         </p>
       )}

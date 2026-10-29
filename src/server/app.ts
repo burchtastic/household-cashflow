@@ -1,5 +1,6 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import {
@@ -28,6 +29,7 @@ import {
 } from './auth.ts';
 import { deployState, readVersion, requestDeploy, type DeployConfig } from './deploy.ts';
 import { applyImport, IMPORT_MAX_BYTES, ImportError, previewImport, type ImportPlan } from './importSheet.ts';
+import { RestoreError, type Restorer } from './restore.ts';
 
 export interface AppOptions {
   timeZone: string;
@@ -39,6 +41,8 @@ export interface AppOptions {
   plaid?: { config: PlaidConfig; api: PlaidApi };
   /** Pull from Plaid on this interval (off when absent, as in tests). "Sync now" works either way. */
   plaidSyncEveryMs?: number;
+  /** Restoring from the off-site backups (src/server/restore.ts); `restart` ends this process so systemd starts it on the restored data. */
+  restore?: { restorer: Restorer; restart: () => void };
   logger?: boolean;
   /** Tests only: stand-in authenticator checks and clock. */
   verifiers?: Verifiers;
@@ -125,6 +129,7 @@ const settingsSchema = {
     estimateMode: { type: 'string', enum: ['average', 'worst'] },
     topUpRoundingCents: { type: 'integer', minimum: 0, maximum: 1000_00 },
     savingsDrawCodes: { type: 'array', items: code, maxItems: 10 },
+    bankCheckThresholdCents: cents,
   },
 } as const;
 
@@ -191,12 +196,16 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return todayIn(opts.timeZone);
   };
 
+  /** The style nonce each bank-connection page was sent with (see the end of this function). */
+  const styleNonces = new WeakMap<object, string>();
+
   // Security headers on every response.
   app.addHook('onSend', async (req, reply, payload) => {
     // Only the bank-connection pages may load Plaid Link (its script and its frame).
     const plaidPage = Boolean(opts.plaid) && PLAID_PAGES.includes(req.url.split('?')[0]);
+    const nonce = styleNonces.get(req);
     reply.header('Content-Security-Policy', plaidPage
-      ? `default-src 'self'; script-src 'self' ${PLAID_LINK_SCRIPT}; style-src 'self'; img-src 'self' data:; ` +
+      ? `default-src 'self'; script-src 'self' ${PLAID_LINK_SCRIPT}; style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ''}; img-src 'self' data:; ` +
         "frame-src https://cdn.plaid.com/; connect-src 'self' https://production.plaid.com/ https://sandbox.plaid.com/; " +
         "frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
       : "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
@@ -746,6 +755,63 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     return { queued: action };
   });
 
+  // ── Restore from the off-site backups ──────────────────────────────────
+
+  const restore = opts.restore;
+  // Each try at the key downloads a backup; a few a minute is plenty for a person.
+  const keyLimiter = new RateLimiter(10, 60_000, opts.now);
+  const backupName = { type: 'string', pattern: '^cashflow-[0-9a-z-]{1,60}\\.db$' } as const;
+  const requireRestore = () => {
+    if (!restore?.restorer.enabled()) throw new HttpError(404, 'Off-site backups are not set up on this server');
+    return restore;
+  };
+  const restoring = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+    try { return await fn(); } catch (e) {
+      if (e instanceof RestoreError) throw new HttpError(e.statusCode, e.message);
+      throw e;
+    }
+  };
+  let restartAfter: string | null = null;
+
+  app.get('/api/admin/restore', async () => ({
+    enabled: Boolean(restore?.restorer.enabled()),
+    last: restore?.restorer.last() ?? null,
+  }));
+
+  app.get('/api/admin/restore/backups', async () => restoring(() => requireRestore().restorer.list()));
+
+  app.post('/api/admin/restore/check', {
+    schema: {
+      body: {
+        type: 'object', additionalProperties: false, required: ['name', 'key'],
+        properties: { name: backupName, key: { type: 'string', minLength: 1, maxLength: 1024 } },
+      },
+    },
+  }, async (req) => {
+    const { restorer } = requireRestore();
+    if (!keyLimiter.take()) throw new HttpError(429, 'Too many tries. Wait a minute.');
+    const { name, key } = req.body as { name: string; key: string };
+    return restoring(() => restorer.check(name, key));
+  });
+
+  app.post('/api/admin/restore/apply', {
+    schema: { body: { type: 'object', additionalProperties: false, required: ['name'], properties: { name: backupName } } },
+    // Restart only once the reply has gone out.
+    onResponse: async (req) => {
+      if (restore && restartAfter === req.id) {
+        restartAfter = null;
+        restore.restart();
+      }
+    },
+  }, async (req, reply) => {
+    const { restorer } = requireRestore();
+    const { name } = req.body as { name: string };
+    const staged = await restoring(() => restorer.stage(db, name));
+    restartAfter = req.id;
+    reply.status(202);
+    return { restarting: true, ...staged };
+  });
+
   // ── Bank connections (Plaid, read-only) ────────────────────────────────
 
   const plaid = opts.plaid;
@@ -906,7 +972,8 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     }));
   });
 
-  // Files it under a code: a bill payment, a savings transfer, or any other type.
+  // Files it under a code: a bill payment, a savings transfer, or any other type. Off-schedule
+  // types are one-offs, so those land on the One-offs page as done, like one logged there.
   app.post('/api/bank-review/:id/assign', {
     schema: {
       params: reviewParams,
@@ -917,10 +984,12 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
     const body = req.body as { code: string; note?: string };
     const b = requireBill(body.code);
     const id = tx(db, () => {
-      const ledgerId = insertTransaction(db, {
+      const item = {
         date: t.date, code: b.code, description: b.name, direction: t.amountCents > 0 ? 'out' : 'in',
-        amountCents: Math.abs(t.amountCents), source: 'plaid', note: body.note?.trim() ?? '', plannedId: null,
-      });
+        amountCents: Math.abs(t.amountCents), note: body.note?.trim() ?? '',
+      } as const;
+      const plannedId = b.schedule.kind === 'none' ? insertPlanned(db, { ...item, status: 'done' }) : null;
+      const ledgerId = insertTransaction(db, { ...item, source: 'plaid', plannedId });
       linkBank(db, ledgerId, t.transactionId);
       setBankHold(db, t.transactionId, null);
       return ledgerId;
@@ -1055,7 +1124,21 @@ export function buildApp(db: DB, opts: AppOptions): FastifyInstance {
 
   if (opts.staticDir && existsSync(opts.staticDir)) {
     // Files are looked up per request, so a rebuild never needs a restart.
-    app.register(fastifyStatic, { root: resolve(opts.staticDir), dotfiles: 'deny' });
+    const root = resolve(opts.staticDir);
+    app.register(fastifyStatic, { root, dotfiles: 'deny' });
+    // On phones, Link positions its frame with a <style> it adds to the page, which the CSP
+    // only lets in by nonce. Each load gets a fresh one, for src/web/plaidLink.ts to hand on.
+    if (opts.plaid) {
+      for (const path of PLAID_PAGES) {
+        app.get(path, (req, reply) => {
+          const nonce = randomBytes(16).toString('base64');
+          styleNonces.set(req, nonce);
+          const html = readFileSync(join(root, 'index.html'), 'utf8')
+            .replace('<head>', `<head>\n    <meta property="csp-nonce" nonce="${nonce}" />`);
+          return reply.header('Cache-Control', 'no-store').type('text/html; charset=utf-8').send(html);
+        });
+      }
+    }
     app.setNotFoundHandler((req, reply) => {
       const path = req.url.split('?')[0];
       // Page routes get the app shell; a missing asset must 404, never become HTML.

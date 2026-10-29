@@ -3,6 +3,7 @@ import type { Settings } from '../../engine/index.ts';
 import { api, auth } from '../api.ts';
 import { AppUpdates } from '../components/AppUpdates.tsx';
 import { ImportSheet } from '../components/ImportSheet.tsx';
+import { RestoreBackup } from '../components/RestoreBackup.tsx';
 import { Security } from '../components/Security.tsx';
 import { AsyncForm, ErrorNote, MoneyInput, useLoad } from '../components/ui.tsx';
 import { longDate, money } from '../format.ts';
@@ -54,6 +55,8 @@ export function SettingsPage() {
 
       <AppUpdates />
 
+      <RestoreBackup />
+
       <section className="card">
         <div className="card-head"><h2>Balance history</h2><span className="muted small">Add new balances from the dashboard.</span></div>
         <div className="table-wrap">
@@ -102,10 +105,15 @@ function SettingsForm({ initial, onSaved }: { initial: Settings; onSaved: () => 
           </select>
         </label>
         <MoneyInput label="Round transfers up to" cents={s.topUpRoundingCents} onChange={(c) => c !== null && set({ topUpRoundingCents: c })} />
+        <MoneyInput label="Ignore bank differences under" cents={s.bankCheckThresholdCents} onChange={(c) => c !== null && set({ bankCheckThresholdCents: c })} />
       </div>
       <p className="hint">
         Checking floor: the balance you never want to drop below. Savings floor: the savings balance you never want to
         draw below. Worst case uses the highest amount each bill hit in the lookback window.
+      </p>
+      <p className="hint">
+        Ignore bank differences under: the dashboard only flags a gap between the bank's balance and the ledger's this
+        big or bigger, unless the bank has less and that would take the account below its floor. $0 flags every gap.
       </p>
       {saved && <p className="small" style={{ color: 'var(--good-ink)' }}>Saved.</p>}
     </AsyncForm>

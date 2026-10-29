@@ -10,7 +10,7 @@ Group=cashflow
 WorkingDirectory=/opt/cashflow
 Environment=RCLONE_CONFIG=/var/lib/cashflow/rclone.conf
 Environment=BACKUP_DIR=/var/lib/cashflow/backups
-Environment=OFFSITE_KEEP_DAYS=90
+Environment=OFFSITE_KEEP_DAYS=45
 ExecStart=/bin/sh deploy/offsite.sh
 UMask=0077
 NoNewPrivileges=true

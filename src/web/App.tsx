@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, auth, SIGNED_OUT_EVENT } from './api.ts';
+import { idleTooLong, markActive, useIdleSignOut } from './idle.ts';
 import { Setup, SignIn } from './pages/SignIn.tsx';
 import { Bills } from './pages/Bills.tsx';
 import { Connect } from './pages/Connect.tsx';
@@ -11,7 +12,7 @@ import { SettingsPage } from './pages/SettingsPage.tsx';
 
 const ROUTES = [
   { hash: '#/', label: 'Dashboard', page: Dashboard },
-  { hash: '#/bills', label: 'Bills', page: Bills },
+  { hash: '#/bills', label: 'Bills & income', page: Bills },
   { hash: '#/one-offs', label: 'One-offs', page: OneOffs },
   { hash: '#/history', label: 'History', page: History },
   { hash: '#/settings', label: 'Settings', page: SettingsPage },
@@ -27,7 +28,9 @@ function useHash() {
   return hash;
 }
 
-type AuthState = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'out'; hasPasskeys: boolean } | { kind: 'in'; demo: boolean };
+type AuthState =
+  | { kind: 'loading' } | { kind: 'error'; message: string }
+  | { kind: 'out'; hasPasskeys: boolean; idle?: boolean } | { kind: 'in'; demo: boolean };
 
 export function App() {
   const hash = useHash();
@@ -35,23 +38,35 @@ export function App() {
   useEffect(() => setMenuOpen(false), [hash]);
   const [state, setState] = useState<AuthState>({ kind: 'loading' });
 
+  // Blanks the screen straight away, then ends the session.
+  const timeOut = useCallback(() => {
+    setState({ kind: 'loading' });
+    const done = () => setState({ kind: 'out', hasPasskeys: true, idle: true });
+    auth.signOut().then(done, done);
+  }, []);
   const refresh = useCallback(() => {
     auth.status().then(
-      (s) => setState(s.authenticated ? { kind: 'in', demo: s.demo } : { kind: 'out', hasPasskeys: s.hasPasskeys }),
+      (s) => {
+        // Reopened after an hour away: sign out before anything shows.
+        if (s.authenticated && idleTooLong()) return timeOut();
+        setState(s.authenticated ? { kind: 'in', demo: s.demo } : { kind: 'out', hasPasskeys: s.hasPasskeys });
+      },
       (e: Error) => setState({ kind: 'error', message: e.message }),
     );
-  }, []);
+  }, [timeOut]);
+  const signedIn = useCallback(() => { markActive(); refresh(); }, [refresh]);
   useEffect(refresh, [refresh]);
   useEffect(() => {
     addEventListener(SIGNED_OUT_EVENT, refresh);
     return () => removeEventListener(SIGNED_OUT_EVENT, refresh);
   }, [refresh]);
+  useIdleSignOut(state.kind === 'in', timeOut);
 
   const setupToken = hash.startsWith('#/setup') ? new URLSearchParams(hash.split('?')[1] ?? '').get('token') : null;
-  if (setupToken) return <Setup token={setupToken} onDone={refresh} />;
+  if (setupToken) return <Setup token={setupToken} onDone={signedIn} />;
   if (state.kind === 'loading') return null;
   if (state.kind === 'error') return <div className="auth-screen"><p className="error">{state.message}</p></div>;
-  if (state.kind === 'out') return <SignIn hasPasskeys={state.hasPasskeys} onSignedIn={refresh} />;
+  if (state.kind === 'out') return <SignIn hasPasskeys={state.hasPasskeys} idle={state.idle} onSignedIn={signedIn} />;
 
   // Bank connections live on real paths, the only pages allowed to load Plaid Link.
   const connect = ['/connect', '/plaid-oauth'].includes(location.pathname);

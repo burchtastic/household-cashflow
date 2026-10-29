@@ -14,13 +14,14 @@ function useAction(fn: () => Promise<void>) {
   return { busy, error, run };
 }
 
-export function SignIn({ hasPasskeys, onSignedIn }: { hasPasskeys: boolean; onSignedIn: () => void }) {
+export function SignIn({ hasPasskeys, idle, onSignedIn }: { hasPasskeys: boolean; idle?: boolean; onSignedIn: () => void }) {
   const { busy, error, run } = useAction(async () => { await auth.signIn(); onSignedIn(); });
   return (
     <div className="auth-screen">
       <div className="card auth-card">
         <div className="auth-logo"><Logo size={64} /></div>
         <h1>Cash<span className="brand-flow">flow</span></h1>
+        {idle && <p className="banner" role="status">Signed out after an hour without use.</p>}
         {hasPasskeys ? (
           <>
             <p className="muted">Sign in with the passkey on this device, or use your phone.</p>

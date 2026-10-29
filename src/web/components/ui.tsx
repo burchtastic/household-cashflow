@@ -103,6 +103,76 @@ export function PencilIcon() {
   );
 }
 
+export interface RowAction {
+  label: string;
+  onSelect: () => void;
+  /** Shown instead of the label on wide screens (e.g. a pencil); the label is then its name. */
+  icon?: ReactNode;
+  title?: string;
+  className?: string;
+}
+
+/**
+ * A table row's buttons. Wide screens get them in a line; phones get one thumb-sized ⋯ that
+ * slides them out over the row. A row with nothing to do gets nothing, not an empty menu.
+ * Its cell needs the `row-menu-cell` class so the menu can cover the row.
+ */
+export function RowActions({ label, actions }: { label: string; actions: RowAction[] }) {
+  const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  // Opened from a keyboard, focus moves into the menu; a tap leaves it be, so no focus ring flashes.
+  const byKeyboard = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    if (byKeyboard.current) menu.current?.querySelector('button')?.focus();
+    const away = (e: PointerEvent) => { if (!menu.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); toggle.current?.focus(); } };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [open]);
+  if (!actions.length) return null;
+
+  return (
+    <>
+      <div className="row-actions wide-only">
+        {actions.map((a) => (
+          <button
+            key={a.label} className={['small', a.icon ? 'icon' : '', a.className ?? ''].join(' ').trim()}
+            title={a.title} aria-label={a.icon ? a.label : undefined} onClick={a.onSelect}
+          >
+            {a.icon ?? a.label}
+          </button>
+        ))}
+      </div>
+      <button
+        ref={toggle} className="row-menu-toggle phone-only" aria-label={`Options for ${label}`} aria-expanded={open}
+        onClick={(e) => { byKeyboard.current = e.detail === 0; setOpen(true); }}
+      >
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" fill="currentColor">
+          <circle cx="4" cy="10" r="1.8" /><circle cx="10" cy="10" r="1.8" /><circle cx="16" cy="10" r="1.8" />
+        </svg>
+      </button>
+      {open && (
+        <div ref={menu} className="row-menu phone-only" role="group" aria-label={`Options for ${label}`}>
+          {actions.map((a) => (
+            <button key={a.label} onClick={() => { setOpen(false); a.onSelect(); }}>{a.label}</button>
+          ))}
+          <button className="row-menu-close" aria-label="Close" onClick={() => { setOpen(false); toggle.current?.focus(); }}>
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M5 5l10 10M15 5L5 15" />
+            </svg>
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** A delete-style button that asks "Sure?" in place before doing anything. */
 export function ConfirmButton({ label, confirmLabel = 'Yes, delete', keepLabel = 'Keep', className = 'small link danger', title, disabled, onConfirm }: {
   label: string; confirmLabel?: string; keepLabel?: string; className?: string; title?: string; disabled?: boolean;
@@ -125,13 +195,5 @@ export function DateText({ iso }: { iso: string }) {
       <span className="wide-only">{shortDate(iso)}</span>
       <span className="phone-only" title={shortDate(iso)}>{mmdd(iso)}</span>
     </>
-  );
-}
-
-/** Text cut to a few characters on phones; tap it to see the rest. */
-export function Clip({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span className={`clip${open ? ' open' : ''}`} title={text} onClick={() => setOpen(!open)}>{text}</span>
   );
 }

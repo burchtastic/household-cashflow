@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { addDays } from '../../engine/dates.ts';
 import type { Direction, PlannedItem, Snapshot } from '../../engine/index.ts';
 import { api, type BillWithStats } from '../api.ts';
+import { ToReview } from '../components/BankReview.tsx';
 import { EditTransactionForm } from '../components/EditTransaction.tsx';
 import { AsyncForm, ConfirmButton, ErrorNote, Modal, MoneyInput, PencilIcon, useLoad } from '../components/ui.tsx';
 import { localToday, money, shortDate } from '../format.ts';
@@ -41,19 +42,22 @@ export function OneOffs() {
       </p>
       <ErrorNote error={error} />
 
+      {/* Unmatched bank activity is mostly one-offs nobody logged yet, so it's waiting here too. */}
+      <ToReview onChanged={planned.reload} />
+
       <section className="card">
         <div className="card-head"><h2>Planned</h2></div>
         {upcoming.length === 0 ? <p className="empty">Nothing planned.</p> : (
           <div className="table-wrap">
-            <table>
+            <table className="stacked">
               <thead><tr><th>Date</th><th>Item</th><th className="num">Amount</th><th /></tr></thead>
               <tbody>
                 {upcoming.map((p) => (
                   <tr key={p.id} className={p.direction === 'in' ? 'inflow' : ''}>
-                    <td>{shortDate(p.date)}{p.date < today && <div className="error small">overdue</div>}</td>
-                    <td>{p.note || p.description}{p.note && <div className="faint small">{p.description}</div>}</td>
+                    <td className="date">{shortDate(p.date)}{p.date < today && <div className="error small">overdue</div>}</td>
+                    <td className="what">{p.note || p.description}{p.note && <div className="faint small">{p.description}</div>}</td>
                     <td className="num amount">{p.direction === 'in' ? '+' : '−'}{money(p.amountCents)}</td>
-                    <td>
+                    <td className="actions">
                       <div className="row-actions">
                         <button className="small" onClick={() => run(() => api.completePlanned(p.id, p.date, p.amountCents))}>Done</button>
                         <button className="small" onClick={() => setEditing({ item: p })}>Edit</button>
@@ -72,16 +76,16 @@ export function OneOffs() {
         <div className="card-head"><h2>Done</h2></div>
         {past.length === 0 ? <p className="empty">Nothing yet.</p> : (
           <div className="table-wrap">
-            <table>
+            <table className="stacked">
               <thead><tr><th>Date</th><th>Item</th><th>Status</th><th className="num">Amount</th><th /></tr></thead>
               <tbody>
                 {past.map((p) => (
                   <tr key={p.id} className="past">
-                    <td>{shortDate(p.date)}</td>
-                    <td>{p.note || p.description}{p.note && <div className="faint small">{p.description}</div>}</td>
-                    <td className="small">{p.status === 'done' && p.date > today ? 'set up' : p.status}</td>
-                    <td className="num">{p.direction === 'in' ? '+' : '−'}{money(p.amountCents)}</td>
-                    <td>
+                    <td className="date">{shortDate(p.date)}</td>
+                    <td className="what">{p.note || p.description}{p.note && <div className="faint small">{p.description}</div>}</td>
+                    <td className="meta small">{p.status === 'done' && p.date > today ? 'set up' : p.status}</td>
+                    <td className="num amount">{p.direction === 'in' ? '+' : '−'}{money(p.amountCents)}</td>
+                    <td className="actions">
                       <div className="row-actions">
                         {p.status === 'done' && (
                           <button
@@ -247,7 +251,7 @@ export function OneOffForm({ item, direction, bills, history, today, balance, on
 
       {filledFrom && <p className="hint" style={{ margin: '6px 0 0' }}>{filledFrom.amount ? 'Type and amount' : 'Type'} filled in from {shortDate(filledFrom.date)}. Change anything that's different.</p>}
 
-      <div className="field" style={{ marginTop: 14 }}>
+      <div className="field form-section">
         <span className="field-label">Type</span>
         <div className="choice-row" role="radiogroup" aria-label="Type">
           {quick.map((b) => (
@@ -286,7 +290,7 @@ export function OneOffForm({ item, direction, bills, history, today, balance, on
         <ErrorNote error={typeError} />
       </div>
 
-      <div className="field" style={{ marginTop: 14 }}>
+      <div className="field form-section">
         <span className="field-label">When</span>
         <div className="choice-row">
           <button type="button" className="choice" aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
@@ -298,7 +302,7 @@ export function OneOffForm({ item, direction, bills, history, today, balance, on
       {item === null && (
         date <= today ? (
           <>
-            <label className="check" style={{ marginTop: 14 }}>
+            <label className="check form-section">
               <input type="checkbox" checked={happened} onChange={(e) => setHappened(e.target.checked)} />
               Already happened (counts as done, not planned)
             </label>
@@ -319,7 +323,7 @@ export function OneOffForm({ item, direction, bills, history, today, balance, on
             )}
           </>
         ) : (
-          <label className="check" style={{ marginTop: 14 }}>
+          <label className="check form-section">
             <input type="checkbox" checked={setUp} onChange={(e) => setSetUp(e.target.checked)} />
             Already set up with the bank (otherwise it's planned). The forecast counts it on {shortDate(date)} either way.
           </label>
